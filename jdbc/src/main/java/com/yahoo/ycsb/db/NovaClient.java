@@ -344,4 +344,19 @@ public class NovaClient {
 		}
 		return -1;
 	}
+
+	public void drainDB(int serverId) {
+		try {
+			Sock sock = getSock(serverId);
+			socketBuffer[0] = 'S';
+			int size = 1;
+			socketBuffer[size] = '\n';
+			size++;
+			sock.out.write(socketBuffer, 0, size);
+			sock.out.flush();
+		} catch (Exception e) {
+			e.printStackTrace();
+			System.exit(-1);
+		}
+	}
 }
