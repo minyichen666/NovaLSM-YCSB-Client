@@ -17,6 +17,8 @@ import com.yahoo.ycsb.DB;
 import com.yahoo.ycsb.DBException;
 import com.yahoo.ycsb.Status;
 import com.yahoo.ycsb.StringByteIterator;
+import com.yahoo.ycsb.db.ConfigurationUtil.Configuration;
+import com.yahoo.ycsb.db.NovaClient.ReturnValue;
 
 public class NovaDBClient extends DB {
 	public static enum Partition {
@@ -28,7 +30,7 @@ public class NovaDBClient extends DB {
 	}
 
 	private Partition partition;
-	private List<LTCFragment> fragments = new ArrayList<>();
+	private Configuration config = null;
 	private Set<Integer> serverIds = Sets.newHashSet();
 	private long valueSize = 0;
 
@@ -55,19 +57,19 @@ public class NovaDBClient extends DB {
 		return builder.toString();
 	}
 
-	private int homeFragment(String key) {
+	private int homeFragment(String key, List<LTCFragment> config) {
 		int intV = Integer.parseInt(key);
 		switch (partition) {
 		case HASH:
 			break;
 		case RANGE:
 			int l = 0;
-			int r = fragments.size() - 1;
+			int r = config.size() - 1;
 			LTCFragment home = null;
 			int m = l + (r - l) / 2;
 			while (l <= r) {
 				m = l + (r - l) / 2;
-				home = fragments.get(m);
+				home = config.get(m);
 				// Check if x is present at mid
 				if (intV >= home.startKey && intV < home.endKey) {
 					break;
@@ -95,7 +97,7 @@ public class NovaDBClient extends DB {
 		String strPartition = props.getProperty("partition");
 		valueSize = Integer.parseInt(props.getProperty("valuesize"));
 		String config_path = props.getProperty("config_path");
-		fragments = ConfigurationUtil.readConfig(config_path);
+		config = ConfigurationUtil.readConfig(config_path);
 		numberOfRecords = Integer.parseInt(props.getProperty("recordcount"));
 		cardinality = Integer.parseInt(props.getProperty("cardinality"));
 
@@ -103,7 +105,7 @@ public class NovaDBClient extends DB {
 			offset = Integer.parseInt(props.getProperty("offset"));
 		}
 
-		System.out.println("Number of fragments " + fragments.size());
+		System.out.println("Number of fragments " + config.current().size());
 		String[] ems = serversString.split(",");
 		List<String> servers = new ArrayList<>();
 
@@ -142,15 +144,13 @@ public class NovaDBClient extends DB {
 
 		synchronized (NovaDBClient.class) {
 			long duration = endTime - startTime;
-			System.out
-					.println("Took " + duration + " to complete the benchmark");
+			System.out.println("Took " + duration + " to complete the benchmark");
 		}
 		novaClient.close();
 	}
 
 	@Override
-	public Status read(String table, String key, Set<String> fields,
-			HashMap<String, ByteIterator> result) {
+	public Status read(String table, String key, Set<String> fields, HashMap<String, ByteIterator> result) {
 		if (debug) {
 			key = "0";
 		}
@@ -159,88 +159,115 @@ public class NovaDBClient extends DB {
 		}
 		int intKey = Integer.parseInt(key) + offset;
 		key = String.valueOf(intKey);
-		int fragmentId = homeFragment(key);
-		int homeServerId = fragments.get(fragmentId).ltcServerId;
-		String value = novaClient.get(key, homeServerId, homeServerId);
-		if (value.length() != valueSize) {
-			System.out.println("FATAL: " + valueSize + " " + value.length());
+		ReturnValue retVal = null;
+		while (true) {
+			int clientConfigId = config.configurationId.get();
+			List<LTCFragment> current = config.configs.get(clientConfigId);
+			int fragmentId = homeFragment(key, current);
+			int homeServerId = config.current().get(fragmentId).ltcServerId;
+			retVal = novaClient.get(key, homeServerId);
+			if (retVal.configId != clientConfigId) {
+				config.configurationId.set(retVal.configId);
+				continue;
+			} else {
+				break;
+			}
+		}
+
+		if (retVal.getValue.length() != valueSize) {
+			System.out.println("FATAL: " + valueSize + " " + retVal.getValue.length());
 			System.exit(-1);
 		}
-		result.put("field0", new StringByteIterator(value));
+		result.put("field0", new StringByteIterator(retVal.getValue));
 		return Status.OK;
 	}
 
 	@Override
-	public Status scan(String table, String startkey, int recordcount,
-			Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
-		int fragmentId = homeFragment(startkey);
-		int startKeyId = Integer.parseInt(startkey);
-		int cardinality = Math.min(this.cardinality,
-				numberOfRecords - startKeyId);
-		int remainingRecords = cardinality;
-		List<String> keys = Lists.newArrayList();
-		List<String> values = Lists.newArrayList();
-		String pivotKey = startkey;
+	public Status scan(String table, String startkey, int recordcount, Set<String> fields,
+			Vector<HashMap<String, ByteIterator>> result) {
 
-		while (remainingRecords > 0) {
-			int serverId = fragments.get(fragmentId).ltcServerId;
-			novaClient.scan(pivotKey, remainingRecords, serverId, keys, values);
-			int keyId = startKeyId + keys.size();
+		while (true) {
+			int clientConfigId = config.configurationId.get();
+			List<LTCFragment> current = config.configs.get(clientConfigId);
+			ReturnValue retVal = null;
 
-			remainingRecords = cardinality - keys.size();
-			pivotKey = String.valueOf(keyId);
-			if (remainingRecords == 0) {
-				break;
-			}
-			while (serverId == fragments.get(fragmentId).ltcServerId) {
-				fragmentId++;
-				if (fragmentId >= fragments.size()) {
-					System.out.println("FATAL-not-enough-fragments: "
-							+ startKeyId + " " + remainingRecords);
+			int fragmentId = homeFragment(startkey, current);
+			int startKeyId = Integer.parseInt(startkey);
+			int cardinality = Math.min(this.cardinality, numberOfRecords - startKeyId);
+			int remainingRecords = cardinality;
+			List<String> keys = Lists.newArrayList();
+			List<String> values = Lists.newArrayList();
+			String pivotKey = startkey;
+
+			boolean retry = false;
+
+			while (remainingRecords > 0) {
+				int serverId = current.get(fragmentId).ltcServerId;
+				retVal = novaClient.scan(pivotKey, remainingRecords, serverId, keys, values);
+
+				if (retVal.configId != clientConfigId) {
+					retry = true;
+					config.configurationId.set(retVal.configId);
+					break;
+				}
+
+				int keyId = startKeyId + keys.size();
+
+				remainingRecords = cardinality - keys.size();
+				pivotKey = String.valueOf(keyId);
+				if (remainingRecords == 0) {
+					break;
+				}
+				while (serverId == current.get(fragmentId).ltcServerId) {
+					fragmentId++;
+					if (fragmentId >= current.size()) {
+						System.out.println("FATAL-not-enough-fragments: " + startKeyId + " " + remainingRecords);
+						System.exit(-1);
+					}
+				}
+				if (keyId + remainingRecords >= numberOfRecords) {
+					System.out.println("FATAL-too-many-records: " + startKeyId + " " + remainingRecords);
+					System.exit(-1);
+				}
+				if (fragmentId >= current.size()) {
+					System.out.println("FATAL-not-enough-fragments: " + startKeyId + " " + remainingRecords);
 					System.exit(-1);
 				}
 			}
-			if (keyId + remainingRecords >= numberOfRecords) {
-				System.out.println("FATAL-too-many-records: " + startKeyId + " "
-						+ remainingRecords);
+
+			if (retry) {
+				continue;
+			}
+
+			if (remainingRecords < 0) {
+				System.out.println("FATAL-too-many-records: " + startKeyId + " " + remainingRecords);
 				System.exit(-1);
 			}
-			if (fragmentId >= fragments.size()) {
-				System.out.println("FATAL-not-enough-fragments: " + startKeyId
-						+ " " + remainingRecords);
-				System.exit(-1);
-			}
-		}
-		if (remainingRecords < 0) {
-			System.out.println("FATAL-too-many-records: " + startKeyId + " "
-					+ remainingRecords);
-			System.exit(-1);
-		}
-		if (cardinality != keys.size() || cardinality != values.size()) {
-			System.out.println(String.format("FATAL-wrong-records: %d %d %d",
-					cardinality, keys.size(), values.size()));
-			System.exit(-1);
-		}
-		for (int i = 0; i < keys.size(); i++) {
-			int actualKey = Integer.parseInt(keys.get(i));
-			if (actualKey != startKeyId + i) {
-				System.out.println("FATAL-key-notsorted: " + actualKey);
-				System.exit(-1);
-			}
-		}
-		for (String value : values) {
-			if (value.length() != valueSize) {
+			if (cardinality != keys.size() || cardinality != values.size()) {
 				System.out.println(
-						"FATAL-value: " + valueSize + " " + value.length());
+						String.format("FATAL-wrong-records: %d %d %d", cardinality, keys.size(), values.size()));
 				System.exit(-1);
 			}
+			for (int i = 0; i < keys.size(); i++) {
+				int actualKey = Integer.parseInt(keys.get(i));
+				if (actualKey != startKeyId + i) {
+					System.out.println("FATAL-key-notsorted: " + actualKey);
+					System.exit(-1);
+				}
+			}
+			for (String value : values) {
+				if (value.length() != valueSize) {
+					System.out.println("FATAL-value: " + valueSize + " " + value.length());
+					System.exit(-1);
+				}
+			}
+			break;
 		}
 		return Status.OK;
 	}
 
 	@Override
-	public Status update(String table, String key,
-			HashMap<String, ByteIterator> values) {
+	public Status update(String table, String key, HashMap<String, ByteIterator> values) {
 		if (debug) {
 			key = "0";
 		}
@@ -253,9 +280,22 @@ public class NovaDBClient extends DB {
 		key = String.valueOf(intKey);
 		String value = buildValue(values);
 
-		int fragmentId = homeFragment(key);
-		int serverId = fragments.get(fragmentId).ltcServerId;
-		novaClient.put(key, value, serverId);
+		ReturnValue retVal = null;
+		while (true) {
+			int clientConfigId = config.configurationId.get();
+			List<LTCFragment> current = config.configs.get(clientConfigId);
+			int fragmentId = homeFragment(key, current);
+			int serverId = current.get(fragmentId).ltcServerId;
+			retVal = novaClient.put(key, value, serverId);
+
+			if (retVal.configId != clientConfigId) {
+				config.configurationId.set(retVal.configId);
+				continue;
+			} else {
+				break;
+			}
+		}
+
 		return Status.OK;
 	}
 
@@ -283,8 +323,7 @@ public class NovaDBClient extends DB {
 	}
 
 	@Override
-	public Status insert(String table, String key,
-			HashMap<String, ByteIterator> values) {
+	public Status insert(String table, String key, HashMap<String, ByteIterator> values) {
 		assert false;
 		return Status.OK;
 	}

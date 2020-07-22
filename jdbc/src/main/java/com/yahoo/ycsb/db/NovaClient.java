@@ -28,6 +28,11 @@ public class NovaClient {
 	private final boolean debug;
 	private int sock_read_pivot = 0;
 
+	public static class ReturnValue {
+		String getValue = null;
+		int configId = 0;
+	}
+
 	public List<String> getServers() {
 		return servers;
 	}
@@ -179,34 +184,42 @@ public class NovaClient {
 		}
 	}
 
-	public String get(String key, int server_id, int home_server_id) {
-		sock_read_pivot = 0;
-		int sid = server_id;
-		int intKey = Integer.parseInt(key);
-		while (true) {
-			int len = readYCSB(sid, key);
-			if (socketBuffer[0] == 'm') {
-				if (debug) {
-					System.out.println(String.format("Miss: tid:%d sid:%d key:%d", tid, sid, intKey));
-				}
-				return "";
-			} else if (socketBuffer[0] == 'h') {
-				if (debug) {
-					System.out.println(String.format("Hit: tid:%d sid:%d key:%d size:%d", tid, sid, intKey, len - 1));
-				}
-				return new String(socketBuffer, 1, len - 1);
-			} else {
-				System.out.println("Unknown response code " + new String(socketBuffer, 0, len) + " len:" + len);
-				System.exit(-1);
+	public ReturnValue get(String key, int serverId) {
+		ReturnValue v = new ReturnValue();
+		try {
+			sock_read_pivot = 0;
+			int intKey = Integer.parseInt(key);
+
+			Sock sock = getSock(serverId);
+			if (debug) {
+				System.out.println(String.format("Get: tid:%d sid:%d key:%d", tid, serverId, intKey));
 			}
-			socketBuffer[0] = 'a';
+			socketBuffer[0] = 'g';
+			int size = longToBytes(socketBuffer, 1, intKey);
+			socketBuffer[size + 1] = '\n';
+			sock.out.write(socketBuffer, 0, size + 2);
+			sock.out.flush();
+
+			int len = readPlainText(sock.in, '\n');
+			v.configId = (int) bytesToLong(socketBuffer);
+			if (debug) {
+				System.out.println(String.format("Hit: tid:%d sid:%d key:%d size:%d", tid, serverId, intKey, len - 1));
+			}
+
+			int valueSize = (int) bytesToLong(socketBuffer);
+			assert valueSize > 0;
+			v.getValue = new String(socketBuffer, sock_read_pivot, (int) valueSize);
+		} catch (Exception e) {
+			e.printStackTrace();
 		}
+		return v;
 	}
 
-	public void scan(String key, int nrecords, int server_id, List<String> keys, List<String> values) {
+	public ReturnValue scan(String key, int nrecords, int server_id, List<String> keys, List<String> values) {
 		sock_read_pivot = 0;
 		int sid = server_id;
 		int intKey = Integer.parseInt(key);
+		ReturnValue v = new ReturnValue();
 		try {
 			Sock sock = getSock(sid);
 			if (debug) {
@@ -231,6 +244,8 @@ public class NovaClient {
 			}
 
 			if (len > 0) {
+				v.configId = (int) bytesToLong(socketBuffer);
+
 				long keySize = 0;
 				long valueSize = 0;
 				do {
@@ -268,34 +283,15 @@ public class NovaClient {
 			e.printStackTrace();
 			System.exit(-1);
 		}
+		return v;
 	}
 
 	private Sock getSock(int serverId) {
 		return sockets.get(serverId);
 	}
 
-	private int readYCSB(int serverId, String key) {
-		try {
-			Sock sock = getSock(serverId);
-			int intKey = Integer.parseInt(key);
-			if (debug) {
-				System.out.println(String.format("Get: tid:%d sid:%d key:%d", tid, serverId, intKey));
-			}
-			socketBuffer[0] = 'g';
-			int size = longToBytes(socketBuffer, 1, intKey);
-			socketBuffer[size + 1] = '\n';
-			sock.out.write(socketBuffer, 0, size + 2);
-			sock.out.flush();
-			int response = read(sock.in);
-			return response;
-		} catch (Exception e) {
-			e.printStackTrace();
-			System.exit(-1);
-		}
-		return -1;
-	}
-
-	public void put(String key, String value, int serverId) {
+	public ReturnValue put(String key, String value, int serverId) {
+		ReturnValue v = new ReturnValue();
 		try {
 			Sock sock = getSock(serverId);
 			int intKey = Integer.parseInt(key);
@@ -325,6 +321,7 @@ public class NovaClient {
 			e.printStackTrace();
 			System.exit(-1);
 		}
+		return v;
 	}
 
 	public int stats(int serverId) {
@@ -354,6 +351,7 @@ public class NovaClient {
 			size++;
 			sock.out.write(socketBuffer, 0, size);
 			sock.out.flush();
+			readPlainText(sock.in, '!');
 		} catch (Exception e) {
 			e.printStackTrace();
 			System.exit(-1);
