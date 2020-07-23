@@ -184,7 +184,7 @@ public class NovaClient {
 		}
 	}
 
-	public ReturnValue get(String key, int serverId) {
+	public ReturnValue get(int clientConfigId, String key, int serverId) {
 		ReturnValue v = new ReturnValue();
 		try {
 			sock_read_pivot = 0;
@@ -195,9 +195,11 @@ public class NovaClient {
 				System.out.println(String.format("Get: tid:%d sid:%d key:%d", tid, serverId, intKey));
 			}
 			socketBuffer[0] = 'g';
-			int size = longToBytes(socketBuffer, 1, intKey);
-			socketBuffer[size + 1] = '\n';
-			sock.out.write(socketBuffer, 0, size + 2);
+			int cfgSize = longToBytes(socketBuffer, 1, clientConfigId);
+
+			int size = longToBytes(socketBuffer, 1 + cfgSize, intKey);
+			socketBuffer[cfgSize + size + 1] = '\n';
+			sock.out.write(socketBuffer, 0, cfgSize + size + 2);
 			sock.out.flush();
 
 			int len = readPlainText(sock.in, '\n');
@@ -205,7 +207,9 @@ public class NovaClient {
 			if (debug) {
 				System.out.println(String.format("Hit: tid:%d sid:%d key:%d size:%d", tid, serverId, intKey, len - 1));
 			}
-
+			if (v.configId != clientConfigId) {
+				return v;
+			}
 			int valueSize = (int) bytesToLong(socketBuffer);
 			assert valueSize > 0;
 			v.getValue = new String(socketBuffer, sock_read_pivot, (int) valueSize);
@@ -215,7 +219,8 @@ public class NovaClient {
 		return v;
 	}
 
-	public ReturnValue scan(String key, int nrecords, int server_id, List<String> keys, List<String> values) {
+	public ReturnValue scan(int clientConfigId, String key, int nrecords, int server_id, List<String> keys,
+			List<String> values) {
 		sock_read_pivot = 0;
 		int sid = server_id;
 		int intKey = Integer.parseInt(key);
@@ -227,6 +232,7 @@ public class NovaClient {
 			}
 			socketBuffer[0] = 'r';
 			int size = 1;
+			size += longToBytes(socketBuffer, size, clientConfigId);
 			size += longToBytes(socketBuffer, size, intKey);
 			size += longToBytes(socketBuffer, size, nrecords);
 			socketBuffer[size] = '\n';
@@ -245,6 +251,9 @@ public class NovaClient {
 
 			if (len > 0) {
 				v.configId = (int) bytesToLong(socketBuffer);
+				if (v.configId != clientConfigId) {
+					return v;
+				}
 
 				long keySize = 0;
 				long valueSize = 0;
@@ -290,13 +299,14 @@ public class NovaClient {
 		return sockets.get(serverId);
 	}
 
-	public ReturnValue put(String key, String value, int serverId) {
+	public ReturnValue put(int clientConfigId, String key, String value, int serverId) {
 		ReturnValue v = new ReturnValue();
 		try {
 			Sock sock = getSock(serverId);
 			int intKey = Integer.parseInt(key);
 			socketBuffer[0] = 'p';
 			int size = 1;
+			size += longToBytes(socketBuffer, size, clientConfigId);
 			size += longToBytes(socketBuffer, size, intKey);
 			size += longToBytes(socketBuffer, size, value.length());
 			copyString(socketBuffer, size, value);
@@ -311,12 +321,27 @@ public class NovaClient {
 						String.format("Put: tid:%d sid:%d key:%d size:%d", tid, serverId, intKey, value.length()));
 			}
 
-			int response = read(sock.in);
+			int response = readPlainText(sock.in, '\n');
+			v.configId = (int) bytesToLong(socketBuffer);
 			socketBuffer[0] = 'a';
-			if (response != 1) {
-				System.out.println("Wrong output put " + response);
-				System.exit(-1);
-			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			System.exit(-1);
+		}
+		return v;
+	}
+	
+	public ReturnValue changeConfig(int serverId) {
+		ReturnValue v = new ReturnValue();
+		try {
+			Sock sock = getSock(serverId);
+			socketBuffer[0] = 'b';
+			socketBuffer[1] = '\n';
+			sock.out.write(socketBuffer, 0, 2);
+			sock.out.flush();
+			int response = readPlainText(sock.in, '\n');
+			v.configId = (int) bytesToLong(socketBuffer);
+			socketBuffer[0] = 'a';
 		} catch (Exception e) {
 			e.printStackTrace();
 			System.exit(-1);

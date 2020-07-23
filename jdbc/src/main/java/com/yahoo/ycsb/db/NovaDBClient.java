@@ -165,7 +165,7 @@ public class NovaDBClient extends DB {
 			List<LTCFragment> current = config.configs.get(clientConfigId);
 			int fragmentId = homeFragment(key, current);
 			int homeServerId = config.current().get(fragmentId).ltcServerId;
-			retVal = novaClient.get(key, homeServerId);
+			retVal = novaClient.get(clientConfigId, key, homeServerId);
 			if (retVal.configId != clientConfigId) {
 				config.configurationId.set(retVal.configId);
 				continue;
@@ -203,7 +203,7 @@ public class NovaDBClient extends DB {
 
 			while (remainingRecords > 0) {
 				int serverId = current.get(fragmentId).ltcServerId;
-				retVal = novaClient.scan(pivotKey, remainingRecords, serverId, keys, values);
+				retVal = novaClient.scan(clientConfigId, pivotKey, remainingRecords, serverId, keys, values);
 
 				if (retVal.configId != clientConfigId) {
 					retry = true;
@@ -286,7 +286,7 @@ public class NovaDBClient extends DB {
 			List<LTCFragment> current = config.configs.get(clientConfigId);
 			int fragmentId = homeFragment(key, current);
 			int serverId = current.get(fragmentId).ltcServerId;
-			retVal = novaClient.put(key, value, serverId);
+			retVal = novaClient.put(clientConfigId, key, value, serverId);
 
 			if (retVal.configId != clientConfigId) {
 				config.configurationId.set(retVal.configId);
