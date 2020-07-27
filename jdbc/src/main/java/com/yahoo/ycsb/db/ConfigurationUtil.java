@@ -21,7 +21,7 @@ public class ConfigurationUtil {
 	public static class Configuration {
 		List<List<LTCFragment>> configs = Lists.newArrayList();
 		AtomicInteger configurationId = new AtomicInteger(0);
-		
+
 		public List<LTCFragment> current() {
 			return configs.get(configurationId.intValue());
 		}
@@ -39,6 +39,7 @@ public class ConfigurationUtil {
 						config.configs.add(fragments);
 					}
 					fragments = Lists.newArrayList();
+					continue;
 				}
 
 				String[] ems = line.split(",");
@@ -95,11 +96,11 @@ public class ConfigurationUtil {
 		return fragments;
 	}
 
-	private static void writeConfig(String outputPath, int nRecords, int nLTCServers, int nLogReplicasPerRange,
-			int nRangesPerServer, List<List<LTCFragment>> configs) throws IOException {
+	private static void writeConfig(String outputPath, String arch, int nRecords, int nLTCServers,
+			int nLogReplicasPerRange, int nRangesPerServer, List<List<LTCFragment>> configs) throws IOException {
 		BufferedWriter bw = new BufferedWriter(new FileWriter(
-				new File(String.format("%s/nova-shared-cc-nrecords-%d-nccservers-%d-nlogreplicas-%d-nranges-%d",
-						outputPath, nRecords, nLTCServers, nLogReplicasPerRange, nRangesPerServer))));
+				new File(String.format("%s/nova-%s-cc-nrecords-%d-nccservers-%d-nlogreplicas-%d-nranges-%d", outputPath,
+						arch, nRecords, nLTCServers, nLogReplicasPerRange, nRangesPerServer))));
 		StringBuilder builder = new StringBuilder();
 		for (int i = 0; i < configs.size(); i++) {
 			builder.append("config-" + i);
@@ -263,7 +264,8 @@ public class ConfigurationUtil {
 					nRangesPerServer);
 			List<List<LTCFragment>> configurations = Lists.newArrayList();
 			configurations.add(fragments);
-			writeConfig(outputPath, nRecords, nLTCServers, nLogReplicasPerRange, nRangesPerServer, configurations);
+			writeConfig(outputPath, arch, nRecords, nLTCServers, nLogReplicasPerRange, nRangesPerServer,
+					configurations);
 		} else if ("migration".equals(arch)) {
 			double zipf = Double.parseDouble(args[index++]);
 			readZipfDist(nRecords, zipf);
@@ -296,7 +298,8 @@ public class ConfigurationUtil {
 			List<LTCFragment> balanced = updateConfigurationBasedOnLoad(nRecords, nLTCServers, configuration);
 			configurations.add(configuration);
 			configurations.add(balanced);
-			writeConfig(outputPath, nRecords, nLTCServers, nLogReplicasPerRange, nRangesPerServer, configurations);
+			writeConfig(outputPath, arch, nRecords, nLTCServers, nLogReplicasPerRange, nRangesPerServer,
+					configurations);
 		}
 	}
 }

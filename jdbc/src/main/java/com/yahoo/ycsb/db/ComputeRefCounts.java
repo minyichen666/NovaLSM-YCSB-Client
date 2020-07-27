@@ -30,7 +30,8 @@ public class ComputeRefCounts {
 
 	public static void main(String[] args) throws Exception {
 		int nrecords = Integer.parseInt(args[0]);
-		computeRefCount(nrecords, 0.27);
+		double zipfianconstant = Double.parseDouble(args[1]);
+		computeRefCount(nrecords, zipfianconstant);
 	}
 
 	public static void computeRefCounts(double zipfConstant) throws Exception {

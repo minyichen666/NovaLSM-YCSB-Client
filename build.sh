@@ -1,7 +1,7 @@
 
 
 HOME="/proj/bg-PG0/haoyu/YCSB-Nova"
-#HOME="/tmp/YCSB-Nova"
+HOME="/tmp/YCSB-Nova"
 SRC="jdbc/src/main/java/com/yahoo/ycsb/db"
 MEMSRC="jdbc/src/main/java/com/meetup/memcached"
 END="$1"

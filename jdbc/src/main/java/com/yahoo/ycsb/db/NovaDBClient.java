@@ -200,7 +200,10 @@ public class NovaDBClient extends DB {
 			String pivotKey = startkey;
 
 			boolean retry = false;
-
+			if (debug) {
+				System.out.println(String.format("Scan %s from server %d at cfg %d", startkey,
+						current.get(fragmentId).ltcServerId, clientConfigId));
+			}
 			while (remainingRecords > 0) {
 				int serverId = current.get(fragmentId).ltcServerId;
 				retVal = novaClient.scan(clientConfigId, pivotKey, remainingRecords, serverId, keys, values);

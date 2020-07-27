@@ -273,8 +273,8 @@ public class NovaClient {
 					}
 
 					if (debug) {
-//					System.out.println(String.format("key-%s value-%d", rkey,
-//						rvalue.length()));	
+						// System.out.println(String.format("key-%s value-%d", rkey,
+						// rvalue.length()));
 					}
 					keys.add(rkey);
 					values.add(rvalue);
@@ -302,6 +302,7 @@ public class NovaClient {
 	public ReturnValue put(int clientConfigId, String key, String value, int serverId) {
 		ReturnValue v = new ReturnValue();
 		try {
+			sock_read_pivot = 0;
 			Sock sock = getSock(serverId);
 			int intKey = Integer.parseInt(key);
 			socketBuffer[0] = 'p';
@@ -322,6 +323,11 @@ public class NovaClient {
 			}
 
 			int response = readPlainText(sock.in, '\n');
+//			String val;
+//			for (int i = 0; i < response; i++) {
+//				System.out.print((char) socketBuffer[i]);
+//			}
+
 			v.configId = (int) bytesToLong(socketBuffer);
 			socketBuffer[0] = 'a';
 		} catch (Exception e) {
@@ -330,9 +336,10 @@ public class NovaClient {
 		}
 		return v;
 	}
-	
+
 	public ReturnValue changeConfig(int serverId) {
 		ReturnValue v = new ReturnValue();
+		sock_read_pivot = 0;
 		try {
 			Sock sock = getSock(serverId);
 			socketBuffer[0] = 'b';
@@ -349,8 +356,30 @@ public class NovaClient {
 		return v;
 	}
 
+	public boolean queryConfigComplete(int serverId) {
+		try {
+			sock_read_pivot = 0;
+			Sock sock = getSock(serverId);
+			socketBuffer[0] = 'R';
+			socketBuffer[1] = '\n';
+			sock.out.write(socketBuffer, 0, 2);
+			sock.out.flush();
+			int response = readPlainText(sock.in, '\n');
+			int retValue = (int) bytesToLong(socketBuffer);
+			socketBuffer[0] = 'a';
+			if (retValue == 0) {
+				return true;
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			System.exit(-1);
+		}
+		return false;
+	}
+
 	public int stats(int serverId) {
 		try {
+			sock_read_pivot = 0;
 			Sock sock = getSock(serverId);
 			socketBuffer[0] = 's';
 			int size = 1;
@@ -369,6 +398,7 @@ public class NovaClient {
 
 	public void drainDB(int serverId) {
 		try {
+			sock_read_pivot = 0;
 			Sock sock = getSock(serverId);
 			socketBuffer[0] = 'S';
 			int size = 1;
