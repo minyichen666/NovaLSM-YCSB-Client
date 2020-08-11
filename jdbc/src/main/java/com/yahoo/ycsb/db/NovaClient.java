@@ -244,7 +244,7 @@ public class NovaClient {
 			if (debug) {
 				System.out.println(len);
 				for (int i = 0; i < len; i++) {
-					System.out.print(socketBuffer[i]);
+					System.out.print((char) socketBuffer[i]);
 				}
 				System.out.println();
 			}

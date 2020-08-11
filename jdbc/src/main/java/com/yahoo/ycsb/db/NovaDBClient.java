@@ -17,7 +17,7 @@ import com.yahoo.ycsb.DB;
 import com.yahoo.ycsb.DBException;
 import com.yahoo.ycsb.Status;
 import com.yahoo.ycsb.StringByteIterator;
-import com.yahoo.ycsb.db.ConfigurationUtil.Configuration;
+import com.yahoo.ycsb.db.ConfigurationUtil.Configurations;
 import com.yahoo.ycsb.db.NovaClient.ReturnValue;
 
 public class NovaDBClient extends DB {
@@ -30,7 +30,7 @@ public class NovaDBClient extends DB {
 	}
 
 	private Partition partition;
-	private Configuration config = null;
+	private Configurations config = null;
 	private Set<Integer> serverIds = Sets.newHashSet();
 	private long valueSize = 0;
 
@@ -105,7 +105,7 @@ public class NovaDBClient extends DB {
 			offset = Integer.parseInt(props.getProperty("offset"));
 		}
 
-		System.out.println("Number of fragments " + config.current().size());
+		System.out.println("Number of fragments " + config.current().fragments.size());
 		String[] ems = serversString.split(",");
 		List<String> servers = new ArrayList<>();
 
@@ -162,9 +162,9 @@ public class NovaDBClient extends DB {
 		ReturnValue retVal = null;
 		while (true) {
 			int clientConfigId = config.configurationId.get();
-			List<LTCFragment> current = config.configs.get(clientConfigId);
+			List<LTCFragment> current = config.configs.get(clientConfigId).fragments;
 			int fragmentId = homeFragment(key, current);
-			int homeServerId = config.current().get(fragmentId).ltcServerId;
+			int homeServerId = config.current().fragments.get(fragmentId).ltcServerId;
 			retVal = novaClient.get(clientConfigId, key, homeServerId);
 			if (retVal.configId != clientConfigId) {
 				config.configurationId.set(retVal.configId);
@@ -188,7 +188,7 @@ public class NovaDBClient extends DB {
 
 		while (true) {
 			int clientConfigId = config.configurationId.get();
-			List<LTCFragment> current = config.configs.get(clientConfigId);
+			List<LTCFragment> current = config.configs.get(clientConfigId).fragments;
 			ReturnValue retVal = null;
 
 			int fragmentId = homeFragment(startkey, current);
@@ -286,7 +286,7 @@ public class NovaDBClient extends DB {
 		ReturnValue retVal = null;
 		while (true) {
 			int clientConfigId = config.configurationId.get();
-			List<LTCFragment> current = config.configs.get(clientConfigId);
+			List<LTCFragment> current = config.configs.get(clientConfigId).fragments;
 			int fragmentId = homeFragment(key, current);
 			int serverId = current.get(fragmentId).ltcServerId;
 			retVal = novaClient.put(clientConfigId, key, value, serverId);

@@ -31,7 +31,8 @@ public class ComputeRefCounts {
 	public static void main(String[] args) throws Exception {
 		int nrecords = Integer.parseInt(args[0]);
 		double zipfianconstant = Double.parseDouble(args[1]);
-		computeRefCount(nrecords, zipfianconstant);
+		int nrecordsPerRead = Integer.parseInt(args[2]);
+		computeRefCount(nrecords, zipfianconstant, nrecordsPerRead);
 	}
 
 	public static void computeRefCounts(double zipfConstant) throws Exception {
@@ -59,16 +60,22 @@ public class ComputeRefCounts {
 
 	}
 
-	public static void computeRefCount(int nrecords, double zipfConstant) throws Exception {
+	public static void computeRefCount(int nrecords, double zipfConstant, int nrecordsPerRead) throws Exception {
 		System.out.println("Monte Carlo simulation on constant " + zipfConstant);
 		int maxLoop = nrecords * 10;
-		Random rand = new Random();
-
 		int[] refCount = new int[nrecords];
 		ZipfianGenerator zipf = new ZipfianGenerator(nrecords, zipfConstant);
 		for (int i = 0; i < maxLoop; i++) {
 			int key = zipf.nextValue().intValue();
-			refCount[key] += 1;
+			if (i % 2 == 0) {
+				refCount[key] += 1;
+			} else {
+				for (int j = 0; j < nrecordsPerRead; j++) {
+					if (key + j < nrecords) {
+						refCount[key + j] += 1;
+					}
+				}
+			}
 		}
 		BufferedWriter bw = new BufferedWriter(
 				new FileWriter(new File(String.format("/tmp/zipfian-%d-%.2f", nrecords, zipfConstant))));
