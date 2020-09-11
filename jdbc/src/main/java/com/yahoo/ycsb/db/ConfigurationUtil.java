@@ -323,9 +323,13 @@ public class ConfigurationUtil {
 			ComputeElasticConfig(outputPath, arch, nRecords, nLTCServers, nStoCs, nRangesPerServer);
 		} else if ("simpleelastic".equals(arch)) {
 			ComputeSimpleElasticConfig(outputPath, arch, nRecords, nLTCServers, nStoCs, nRangesPerServer);
+		} else if ("workloada".equals(arch)) {
+			ComputeRW50Config(outputPath, arch, nRecords, nLTCServers, nStoCs, nRangesPerServer);
+		} else if ("workloade".equals(arch)) {
+			ComputeSW50Config(outputPath, arch, nRecords, nLTCServers, nStoCs, nRangesPerServer);
 		}
 	}
-	
+
 	private static List<Double> Real() throws Exception {
 		String file = "/home/haoyuhua/Documents/nova/NovaLSM-YCSB-Client/jdbc/scan_stats";
 		BufferedReader br = new BufferedReader(new FileReader(new File(file)));
@@ -371,18 +375,19 @@ public class ConfigurationUtil {
 			}
 			configuration.addAll(fragments);
 		}
-		
-//		for (int i = 0; i < configuration.size(); i++) {
-//			configuration.get(i).refCount = 0;
-//			for (int key = (int) configuration.get(i).startKey; key < configuration.get(i).endKey; key++) {
-//				configuration.get(i).refCount += new_refs.get(key);
-//			}
-//		}
-		
-//		List<Double> items = Real();
-//		for (int i = 0; i < items.size(); i++) {
-//			configuration.get(i).refCount = items.get(i);
-//		}
+
+		// for (int i = 0; i < configuration.size(); i++) {
+		// configuration.get(i).refCount = 0;
+		// for (int key = (int) configuration.get(i).startKey; key <
+		// configuration.get(i).endKey; key++) {
+		// configuration.get(i).refCount += new_refs.get(key);
+		// }
+		// }
+
+		// List<Double> items = Real();
+		// for (int i = 0; i < items.size(); i++) {
+		// configuration.get(i).refCount = items.get(i);
+		// }
 		List<LTCFragment> balanced = updateConfigurationBasedOnLoad(nRecords, nLTCServers, configuration);
 		Configurations configs = new Configurations();
 		{
@@ -785,6 +790,171 @@ public class ConfigurationUtil {
 			}
 			for (int j = 0; j < 5 - i; j++) {
 				cfg.stocs.add(nLTCServers + j);
+			}
+			configs.configs.add(cfg);
+		}
+		writeConfig(outputPath, arch, nRecords, nLTCServers, nStoCs, nRangesPerServer, 0, 1, configs);
+	}
+
+	private static void ComputeRW50Config(String outputPath, String arch, int nRecords, int nLTCServers, int nStoCs,
+			int nRangesPerServer) throws Exception, IOException {
+		long now = 0;
+		int initIntervalMin = 20;
+		int intervalMin = 15;
+		Configurations configs = new Configurations();
+		{
+			Configuration cfg = new Configuration();
+			cfg.startTimeInSeconds = now;
+			cfg.fragments = generateConfig(outputPath, nRecords, 1, nRangesPerServer);
+			for (int i = 0; i < 1; i++) {
+				cfg.ltcs.add(i);
+			}
+			for (int i = 0; i < 1; i++) {
+				cfg.stocs.add(nLTCServers + i);
+			}
+			configs.configs.add(cfg);
+		}
+		now += initIntervalMin * 60;
+		// Add three StoC,
+		for (int i = 1; i <= 3; i++) {
+			now += intervalMin * 60;
+			Configuration cfg = new Configuration();
+			cfg.startTimeInSeconds = now;
+			cfg.fragments = configs.configs.get(configs.configs.size() - 1).copy();
+			for (int j = 0; j < 1; j++) {
+				cfg.ltcs.add(j);
+			}
+			for (int j = 0; j < 1 + i; j++) {
+				cfg.stocs.add(nLTCServers + j);
+			}
+			configs.configs.add(cfg);
+		}
+		// Remove three StoC,
+		for (int i = 1; i <= 3; i++) {
+			now += intervalMin * 60;
+			Configuration cfg = new Configuration();
+			cfg.startTimeInSeconds = now;
+			cfg.fragments = configs.configs.get(configs.configs.size() - 1).copy();
+			for (int j = 0; j < 1; j++) {
+				cfg.ltcs.add(j);
+			}
+			for (int j = 0; j < 4 - i; j++) {
+				cfg.stocs.add(nLTCServers + j);
+			}
+			configs.configs.add(cfg);
+		}
+		writeConfig(outputPath, arch, nRecords, nLTCServers, nStoCs, nRangesPerServer, 0, 1, configs);
+	}
+
+	private static void ComputeSW50Config(String outputPath, String arch, int nRecords, int nLTCServers, int nStoCs,
+			int nRangesPerServer) throws Exception, IOException {
+		long now = 0;
+		int initIntervalMin = 10;
+		int intervalMin = 15;
+		Configurations configs = new Configurations();
+		{
+			Configuration cfg = new Configuration();
+			cfg.startTimeInSeconds = now;
+			cfg.fragments = generateConfig(outputPath, nRecords, 1, nRangesPerServer);
+			for (int i = 0; i < 1; i++) {
+				cfg.ltcs.add(i);
+			}
+			for (int i = 0; i < 10; i++) {
+				cfg.stocs.add(nLTCServers + i);
+			}
+			configs.configs.add(cfg);
+		}
+
+		// Add one LTC. Move 50% fragment to LTC-1.
+		{
+			Configuration cfg = new Configuration();
+			now += initIntervalMin * 60;
+			cfg.startTimeInSeconds = now;
+			cfg.fragments = generateConfig(outputPath, nRecords, 1, nRangesPerServer);
+			for (int i = 0; i < cfg.fragments.size() / 2; i++) {
+				cfg.fragments.get(i).ltcServerId = 1;
+			}
+			for (int i = 0; i < 2; i++) {
+				cfg.ltcs.add(i);
+			}
+			for (int i = 0; i < 10; i++) {
+				cfg.stocs.add(nLTCServers + i);
+			}
+			configs.configs.add(cfg);
+		}
+
+		// Add one LTC. Move 50% fragment from each LTC to LTC-2.
+		{
+			Configuration cfg = new Configuration();
+			now += intervalMin * 60;
+			cfg.startTimeInSeconds = now;
+			cfg.fragments = configs.configs.get(configs.configs.size() - 1).copy();
+			int fragPerServer = nRangesPerServer / 3 / 2;
+			int[] moved = new int[2];
+
+			for (int i = 0; i < cfg.fragments.size(); i++) {
+				int serverid = cfg.fragments.get(i).ltcServerId;
+				if (moved[serverid] == fragPerServer) {
+					continue;
+				}
+				moved[serverid]++;
+				cfg.fragments.get(i).ltcServerId = 2;
+			}
+			for (int i = 0; i < 3; i++) {
+				cfg.ltcs.add(i);
+			}
+			for (int i = 0; i < 10; i++) {
+				cfg.stocs.add(nLTCServers + i);
+			}
+			configs.configs.add(cfg);
+		}
+
+		now += intervalMin * 60;
+
+		// Remove LTC-2. Move 50% fragments to each LTC.
+		{
+			Configuration cfg = new Configuration();
+			now += intervalMin * 60;
+			cfg.startTimeInSeconds = now;
+			cfg.fragments = configs.configs.get(configs.configs.size() - 1).copy();
+			int rr = 2;
+			int moveToLTC = 0;
+			for (int i = 0; i < cfg.fragments.size(); i++) {
+				int serverid = cfg.fragments.get(i).ltcServerId;
+				if (serverid != 2) {
+					continue;
+				}
+				cfg.fragments.get(i).ltcServerId = moveToLTC;
+				moveToLTC = (moveToLTC + 1) % 2;
+			}
+			for (int i = 0; i < 2; i++) {
+				cfg.ltcs.add(i);
+			}
+			for (int i = 0; i < 10; i++) {
+				cfg.stocs.add(nLTCServers + i);
+			}
+			configs.configs.add(cfg);
+		}
+
+		// Remove LTC-1. Move 100% fragments to LTC-0.
+		{
+			Configuration cfg = new Configuration();
+			now += intervalMin * 60;
+			cfg.startTimeInSeconds = now;
+			cfg.fragments = configs.configs.get(configs.configs.size() - 1).copy();
+			int moveToLTC = 0;
+			for (int i = 0; i < cfg.fragments.size(); i++) {
+				int serverid = cfg.fragments.get(i).ltcServerId;
+				if (serverid != 1) {
+					continue;
+				}
+				cfg.fragments.get(i).ltcServerId = moveToLTC;
+			}
+			for (int i = 0; i < 1; i++) {
+				cfg.ltcs.add(i);
+			}
+			for (int i = 0; i < 10; i++) {
+				cfg.stocs.add(nLTCServers + i);
 			}
 			configs.configs.add(cfg);
 		}
