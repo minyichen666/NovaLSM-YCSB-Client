@@ -418,7 +418,7 @@ class WarmUpThread implements Runnable {
     }
     try {
       long startTimeNanos = System.nanoTime();
-      int i = keyEnd;
+      int i = keyEnd - 1;
       CoreWorkload coreworkload = (CoreWorkload)workload;
       while ((i >= keyStart) && !coreworkload.isStopRequested()) {
 
@@ -854,7 +854,7 @@ public final class Client {
     Thread warningthread = setupWarningThread();
     warningthread.start();
 
-    int numberOfRecords = Integer.parseInt(props.getProperty("recordcount"));
+    int numberOfRecords = Integer.parseInt(props.getProperty("range"));
     int numberOfRegions = 100;
 
     int warmupthreadcount = 10;
@@ -896,6 +896,7 @@ public final class Client {
             // ignored
           }
         }
+        System.out.println("finished " + start + " - " + end);
       }
     }
 
@@ -1095,6 +1096,7 @@ public final class Client {
 
         WarmUpThread t = new WarmUpThread(db, dotransactions, workload, props, threadopcount, targetperthreadperms, completeLatch,
          keyStart, keyEnd);
+         System.out.println("keyStart: " + keyStart + " keyEnd: " + keyEnd);
 
         clients.add(t);
       }
