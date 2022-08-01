@@ -688,6 +688,34 @@ public class CoreWorkload extends Workload {
 		return keynum;
 	}
 
+	public void doTransactionRead(DB db, int keyNum) {
+		// choose the given key
+		int keynum = keyNum;
+
+		String keyname = buildKeyName(keynum);
+
+		HashSet<String> fields = null;
+
+		if (!readallfields) {
+			// read a random field
+			//			String fieldname = fieldnames.get(fieldchooser.nextValue().intValue());
+			String fieldname = "FIELD1";
+
+			fields = new HashSet<String>();
+			fields.add(fieldname);
+		} else if (dataintegrity) {
+			// pass the full field list if dataintegrity is on for verification
+			fields = new HashSet<String>(fieldnames);
+		}
+
+		HashMap<String, ByteIterator> cells = new HashMap<String, ByteIterator>();
+		db.read(table, keyname, fields, cells);
+
+		if (dataintegrity) {
+			verifyRow(keyname, cells);
+		}
+	}
+
 	public void doTransactionRead(DB db) {
 		// choose a random key
 		int keynum = nextKeynum();

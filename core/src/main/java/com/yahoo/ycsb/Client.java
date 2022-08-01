@@ -20,6 +20,7 @@ package com.yahoo.ycsb;
 import com.yahoo.ycsb.measurements.Measurements;
 import com.yahoo.ycsb.measurements.exporter.MeasurementsExporter;
 import com.yahoo.ycsb.measurements.exporter.TextMeasurementsExporter;
+import com.yahoo.ycsb.workloads.CoreWorkload;
 import org.apache.htrace.core.HTraceConfiguration;
 import org.apache.htrace.core.TraceScope;
 import org.apache.htrace.core.Tracer;
@@ -352,6 +353,123 @@ final class RemainingFormatter {
       time.append(seconds).append(" seconds ");
     }
     return time;
+  }
+}
+
+class WarmUpThread implements Runnable {
+
+  private final CountDownLatch completeLatch;
+  private static boolean spinSleep;
+  private DB db;
+  private boolean dotransactions;
+  private Workload workload;
+  private int opcount;
+  private double targetOpsPerMs;
+
+  private int opsdone;
+  private int threadid;
+  private int threadcount;
+  private Object workloadstate;
+  private Properties props;
+  private long targetOpsTickNs;
+  private int keyStart;
+  private int keyEnd;
+
+
+  public WarmUpThread(DB db, boolean dotransactions, Workload workload, Properties props, int opcount,
+                      double targetperthreadperms, CountDownLatch completeLatch, int keyStart, int keyEnd) {
+    this.db = db;
+    this.dotransactions = dotransactions;
+    this.workload = workload;
+    this.opcount = opcount;
+    opsdone = 0;
+    if (targetperthreadperms > 0) {
+      targetOpsPerMs = targetperthreadperms;
+      targetOpsTickNs = (long) (1000000 / targetOpsPerMs);
+    }
+    this.props = props;
+    spinSleep = Boolean.valueOf(this.props.getProperty("spin.sleep", "false"));
+    this.completeLatch = completeLatch;
+    this.keyStart = keyStart;
+    this.keyEnd = keyEnd;
+  }
+
+
+  @Override
+  public void run() {
+    
+    try {
+      workloadstate = workload.initThread(props, threadid, threadcount);
+    } catch (WorkloadException e) {
+      e.printStackTrace();
+      e.printStackTrace(System.out);
+      return;
+    }
+
+    //NOTE: Switching to using nanoTime and parkNanos for time management here such that the measurements
+    // and the client thread have the same view on time.
+
+    //spread the thread operations out so they don't all hit the DB at the same time
+    // GH issue 4 - throws exception if _target>1 because random.nextInt argument must be >0
+    // and the sleep() doesn't make sense for granularities < 1 ms anyway
+    if ((targetOpsPerMs > 0) && (targetOpsPerMs <= 1.0)) {
+      long randomMinorDelay = Utils.random().nextInt((int) targetOpsTickNs);
+      sleepUntil(System.nanoTime() + randomMinorDelay);
+    }
+    try {
+      long startTimeNanos = System.nanoTime();
+      int i = keyEnd;
+      CoreWorkload coreworkload = (CoreWorkload)workload;
+      while ((i >= keyStart) && !coreworkload.isStopRequested()) {
+
+        // if (!workload.doTransaction(db, workloadstate)) {
+        //   break;
+        // }
+        coreworkload.doTransactionRead(db, i);
+        i --;
+        opsdone++;
+
+        throttleNanos(startTimeNanos);
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+      e.printStackTrace(System.out);
+      System.exit(0);
+    }
+
+    try {
+      db.cleanup();
+    } catch (DBException e) {
+      e.printStackTrace();
+      e.printStackTrace(System.out);
+    } finally {
+      completeLatch.countDown();
+    }
+  }
+
+  private static void sleepUntil(long deadline) {
+    while (System.nanoTime() < deadline) {
+      if (!spinSleep) {
+        LockSupport.parkNanos(deadline - System.nanoTime());
+      }
+    }
+  }
+
+  private void throttleNanos(long startTimeNanos) {
+    //throttle the operations
+    if (targetOpsPerMs > 0) {
+      // delay until next tick
+      long deadline = startTimeNanos + opsdone * targetOpsTickNs;
+      sleepUntil(deadline);
+    }
+  }
+
+  /**
+   * The total amount of work this thread is still expected to do.
+   */
+  int getOpsTodo() {
+    int todo = opcount - opsdone;
+    return todo < 0 ? 0 : todo;
   }
 }
 
@@ -732,9 +850,54 @@ public final class Client {
       double targetperthread = ((double) target) / ((double) threadcount);
       targetperthreadperms = targetperthread / 1000.0;
     }
-
+    //?
     Thread warningthread = setupWarningThread();
     warningthread.start();
+
+    int numberOfRecords = Integer.parseInt(props.getProperty("recordcount"));
+    int numberOfRegions = 100;
+
+    int warmupthreadcount = 10;
+
+
+    for(int i = numberOfRegions - 1; i >= 0; i --){
+
+      Measurements.setProperties(props);
+
+      final CountDownLatch completeLatch1 = new CountDownLatch(warmupthreadcount);
+
+      Workload workload1 = getWorkload(props);
+
+      final Tracer tracer1 = getTracer(props, workload1);
+
+      initWorkload(props, warningthread, workload1, tracer1);
+
+      int start = numberOfRecords / numberOfRegions * i;
+      int end = numberOfRecords / numberOfRegions * (i + 1);
+
+      final List<WarmUpThread> warmup_clients = initDb(dbname, props, warmupthreadcount, targetperthreadperms,
+          workload1, tracer1, completeLatch1, start, end);
+
+      try (final TraceScope span = tracer1.newScope(CLIENT_WORKLOAD_SPAN)) {
+
+        final Map<Thread, WarmUpThread> threads = new HashMap<>(warmupthreadcount);
+        for (WarmUpThread client : warmup_clients) {
+          threads.put(new Thread(tracer1.wrap(client, "WarmUpThread")), client);
+        }
+
+        for (Thread t : threads.keySet()) {
+          t.start();
+        }
+
+        for (Map.Entry<Thread, WarmUpThread> entry : threads.entrySet()) {
+          try {
+            entry.getKey().join();
+          } catch (InterruptedException ignored) {
+            // ignored
+          }
+        }
+      }
+    }
 
     Measurements.setProperties(props);
 
@@ -878,6 +1041,60 @@ public final class Client {
 
         ClientThread t = new ClientThread(db, dotransactions, workload, props, threadopcount, targetperthreadperms,
             completeLatch);
+
+        clients.add(t);
+      }
+
+      if (initFailed) {
+        System.err.println("Error initializing datastore bindings.");
+        System.exit(0);
+      }
+    }
+    return clients;
+  }
+
+  private static List<WarmUpThread> initDb(String dbname, Properties props, int threadcount,
+                                           double targetperthreadperms, Workload workload, Tracer tracer, 
+                                           CountDownLatch completeLatch, int start, int end) {
+    boolean initFailed = false;
+    boolean dotransactions = Boolean.valueOf(props.getProperty(DO_TRANSACTIONS_PROPERTY, String.valueOf(true)));
+
+    final List<WarmUpThread> clients = new ArrayList<>(threadcount);
+    try (final TraceScope span = tracer.newScope(CLIENT_INIT_SPAN)) {
+      int opcount;
+      if (dotransactions) {
+        opcount = Integer.parseInt(props.getProperty(OPERATION_COUNT_PROPERTY, "0"));
+      } else {
+        if (props.containsKey(INSERT_COUNT_PROPERTY)) {
+          opcount = Integer.parseInt(props.getProperty(INSERT_COUNT_PROPERTY, "0"));
+        } else {
+          opcount = Integer.parseInt(props.getProperty(RECORD_COUNT_PROPERTY, DEFAULT_RECORD_COUNT));
+        }
+      }
+
+      for (int threadid = 0; threadid < threadcount; threadid++) {
+        DB db;
+        try {
+          db = DBFactory.newDB(dbname, props, tracer);
+          db.init();
+        } catch (DBException | UnknownDBException e) {
+          System.out.println("Unknown DB " + dbname);
+          initFailed = true;
+          break;
+        }
+
+        int threadopcount = opcount / threadcount;
+
+        // ensure correct number of operations, in case opcount is not a multiple of threadcount
+        if (threadid < opcount % threadcount) {
+          ++threadopcount;
+        }
+
+        int keyStart = (end - start) / threadcount * threadid + start;
+        int keyEnd = (end - start) / threadcount * (threadid + 1) + start;
+
+        WarmUpThread t = new WarmUpThread(db, dotransactions, workload, props, threadopcount, targetperthreadperms, completeLatch,
+         keyStart, keyEnd);
 
         clients.add(t);
       }
